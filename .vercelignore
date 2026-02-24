@@ -1,0 +1,18 @@
+# Tests — not needed at runtime
+__tests__/
+jest.config.js
+jest.setup.js
+
+# Database migrations — managed via Supabase dashboard/CLI, not Vercel
+supabase/
+
+# Docs & metadata
+docs/
+README.md
+LICENSE
+.cursorrules
+
+# Local env files (never deploy secrets)
+.env.local
+.env.development
+.env.*.local
