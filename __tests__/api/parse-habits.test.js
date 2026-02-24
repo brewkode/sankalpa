@@ -31,7 +31,19 @@ function makeRequest(body) {
   });
 }
 
+/** Mock a successful Anthropic response. Injects confidence: 1.0 by default so existing tests stay green. */
 function mockAnthropicSuccess(habits) {
+  const withConfidence = habits.map((h) => ({ confidence: 1.0, ...h }));
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      content: [{ type: "text", text: JSON.stringify(withConfidence) }],
+    }),
+  });
+}
+
+/** Mock an Anthropic response with explicit confidence values (no defaults injected). */
+function mockAnthropicWithConfidence(habits) {
   global.fetch = jest.fn().mockResolvedValue({
     ok: true,
     json: async () => ({
@@ -51,7 +63,7 @@ function mockSupabaseSuccess(rows) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  // Defaults: authenticated session, one parsed habit, successful DB insert
+  // Defaults: authenticated session, one high-confidence parsed habit, successful DB insert
   getServerSession.mockResolvedValue({ user: { id: "test-user" } });
   mockAnthropicSuccess([{ habit_name: "yoga", quantity: 30, unit: "minutes" }]);
   mockSupabaseSuccess([
@@ -162,7 +174,7 @@ describe("POST /api/parse-habits", () => {
           content: [
             {
               type: "text",
-              text: '```json\n[{"habit_name":"running","quantity":5,"unit":"km"}]\n```',
+              text: '```json\n[{"habit_name":"running","quantity":5,"unit":"km","confidence":0.95}]\n```',
             },
           ],
         }),
@@ -173,6 +185,120 @@ describe("POST /api/parse-habits", () => {
 
       const res = await POST(makeRequest({ voiceInput: "ran 5km" }));
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("confidence scoring", () => {
+    it("auto-saves when all habits meet the confidence threshold", async () => {
+      mockAnthropicWithConfidence([
+        { habit_name: "yoga", quantity: 30, unit: "minutes", confidence: 0.95 },
+      ]);
+      const rows = [{ id: 1, habit_name: "yoga", quantity: 30, unit: "minutes", is_complete: true }];
+      mockSupabaseSuccess(rows);
+
+      const res = await POST(makeRequest({ voiceInput: "I did yoga for 30 minutes" }));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.logs).toEqual(rows);
+      expect(supabaseServer.from).toHaveBeenCalledWith("habit_logs");
+    });
+
+    it("returns requiresConfirmation and does NOT insert when confidence is below threshold", async () => {
+      mockAnthropicWithConfidence([
+        { habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 },
+      ]);
+
+      const res = await POST(makeRequest({ voiceInput: "yoga" }));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.requiresConfirmation).toBe(true);
+      expect(data.habits).toHaveLength(1);
+      expect(data.habits[0].habit_name).toBe("yoga");
+      expect(supabaseServer.from).not.toHaveBeenCalled();
+    });
+
+    it("requires confirmation when ANY habit in a multi-habit utterance is low confidence", async () => {
+      mockAnthropicWithConfidence([
+        { habit_name: "yoga",      quantity: 30,   unit: "minutes", confidence: 0.92 },
+        { habit_name: "something", quantity: null, unit: null,       confidence: 0.30 },
+      ]);
+
+      const res = await POST(makeRequest({ voiceInput: "yoga and something" }));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.requiresConfirmation).toBe(true);
+      expect(data.habits).toHaveLength(2);
+      expect(supabaseServer.from).not.toHaveBeenCalled();
+    });
+
+    it("auto-saves when confidence is exactly at the threshold (0.7)", async () => {
+      mockAnthropicWithConfidence([
+        { habit_name: "yoga", quantity: null, unit: null, confidence: 0.7 },
+      ]);
+      const rows = [{ id: 1, habit_name: "yoga", quantity: null, unit: null, is_complete: false }];
+      mockSupabaseSuccess(rows);
+
+      const res = await POST(makeRequest({ voiceInput: "yoga" }));
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(supabaseServer.from).toHaveBeenCalledWith("habit_logs");
+    });
+
+    it("defaults confidence to 1.0 when the field is absent (safe fallback)", async () => {
+      // Response without a confidence field — should auto-save, not require confirmation
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          content: [
+            { type: "text", text: JSON.stringify([{ habit_name: "yoga", quantity: null, unit: null }]) },
+          ],
+        }),
+      });
+      const rows = [{ id: 1, habit_name: "yoga", quantity: null, unit: null, is_complete: false }];
+      mockSupabaseSuccess(rows);
+
+      const res = await POST(makeRequest({ voiceInput: "yoga" }));
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(supabaseServer.from).toHaveBeenCalledWith("habit_logs");
+    });
+  });
+
+  describe("confirmed save flow", () => {
+    it("skips the LLM and saves directly when confirmed: true", async () => {
+      const rows = [{ id: 1, habit_name: "yoga", quantity: null, unit: null, is_complete: false }];
+      mockSupabaseSuccess(rows);
+
+      const res = await POST(
+        makeRequest({
+          voiceInput: "yoga",
+          confirmed: true,
+          habits: [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }],
+        })
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      // Anthropic must NOT have been called
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(supabaseServer.from).toHaveBeenCalledWith("habit_logs");
+    });
+
+    it("returns 400 when confirmed is true but habits array is empty", async () => {
+      const res = await POST(
+        makeRequest({ voiceInput: "yoga", confirmed: true, habits: [] })
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "No habits provided for confirmed save" });
+    });
+
+    it("returns 400 when confirmed is true but habits is missing", async () => {
+      const res = await POST(
+        makeRequest({ voiceInput: "yoga", confirmed: true })
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "No habits provided for confirmed save" });
     });
   });
 

@@ -2,6 +2,19 @@ import React from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import VoiceButton from "../../components/VoiceButton";
 
+// Mock HabitConfirmCard to isolate VoiceButton's state machine logic
+jest.mock("../../components/HabitConfirmCard", () =>
+  function MockHabitConfirmCard({ habits, onConfirm, onDiscard }) {
+    return (
+      <div data-testid="habit-confirm-card">
+        <span data-testid="card-habits">{habits.map((h) => h.habit_name).join(",")}</span>
+        <button onClick={onConfirm}>Yes, log it</button>
+        <button onClick={onDiscard}>Discard</button>
+      </div>
+    );
+  }
+);
+
 // window.SpeechRecognition is set to jest.fn() by jest.setup.js,
 // which runs before this module is imported. VoiceButton captures that
 // reference at module load time, so configuring the mock here affects
@@ -33,7 +46,7 @@ describe("VoiceButton", () => {
 
   it("button is disabled while recording", () => {
     render(<VoiceButton />);
-    const button = screen.getByRole("button");
+    const button = screen.getByRole("button", { name: /Tell me/i });
 
     fireEvent.click(button);
 
@@ -49,7 +62,7 @@ describe("VoiceButton", () => {
     });
 
     render(<VoiceButton />);
-    fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
 
     act(() => {
       mockInstance.onresult({
@@ -69,7 +82,7 @@ describe("VoiceButton", () => {
     });
 
     render(<VoiceButton />);
-    fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
 
     act(() => {
       mockInstance.onresult({ results: [[{ transcript: "xyzzy" }]] });
@@ -86,7 +99,7 @@ describe("VoiceButton", () => {
     global.fetch.mockRejectedValue(new Error("Network error"));
 
     render(<VoiceButton />);
-    fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
 
     act(() => {
       mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
@@ -99,7 +112,7 @@ describe("VoiceButton", () => {
 
   it('shows "Microphone access denied." on a not-allowed speech error', () => {
     render(<VoiceButton />);
-    fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
 
     act(() => {
       mockInstance.onerror({ error: "not-allowed" });
@@ -110,7 +123,7 @@ describe("VoiceButton", () => {
 
   it("shows a generic error for other speech recognition failures", () => {
     render(<VoiceButton />);
-    fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
 
     act(() => {
       mockInstance.onerror({ error: "network" });
@@ -119,5 +132,111 @@ describe("VoiceButton", () => {
     expect(
       screen.getByText("Voice recognition failed. Try again.")
     ).toBeInTheDocument();
+  });
+
+  // ── Confidence confirmation flow ───────────────────────────────────────────
+
+  it("shows HabitConfirmCard when the API returns requiresConfirmation", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        requiresConfirmation: true,
+        habits: [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }],
+      }),
+    });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("habit-confirm-card")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("card-habits")).toHaveTextContent("yoga");
+  });
+
+  it("the Tell me button is disabled while in confirming state", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        requiresConfirmation: true,
+        habits: [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }],
+      }),
+    });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("habit-confirm-card"));
+
+    expect(screen.getByRole("button", { name: /Tell me/i })).toBeDisabled();
+  });
+
+  it("posts confirmed: true with pendingHabits when user clicks Yes, log it", async () => {
+    const habits = [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }];
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ requiresConfirmation: true, habits }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, logs: [] }),
+      });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("habit-confirm-card"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Yes, log it/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("✨ Logged.")).toBeInTheDocument();
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse(global.fetch.mock.calls[1][1].body);
+    expect(secondBody.confirmed).toBe(true);
+    expect(secondBody.habits).toEqual(habits);
+    expect(secondBody.voiceInput).toBe("yoga");
+  });
+
+  it("resets to idle and removes the card when user clicks Discard", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        requiresConfirmation: true,
+        habits: [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }],
+      }),
+    });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("habit-confirm-card"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Discard/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("habit-confirm-card")).not.toBeInTheDocument();
+    });
+    // Voice button re-enabled and ready
+    expect(screen.getByRole("button", { name: /Tell me/i })).not.toBeDisabled();
   });
 });
