@@ -1,25 +1,17 @@
-import Link from "next/link";
+import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
+import { authOptions } from "../../lib/auth";
 
-export default function LoginPage() {
-  console.log(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6">
-      <div className="text-center max-w-md">
-        <h1 className="text-2xl font-light text-stone-700 tracking-tight">
-          Sign in
-        </h1>
-        <p className="mt-2 text-stone-500 text-sm">
-          Google OAuth will be wired here.
-        </p>
-        <div className="mt-8">
-          <Link
-            href="/"
-            className="text-stone-500 text-sm hover:text-stone-700 underline"
-          >
-            ← Back
-          </Link>
-        </div>
-      </div>
-    </main>
-  );
+/**
+ * /login is redirect-only: unauthenticated → home (landing); authenticated → app home.
+ * When you add a dedicated app shell (e.g. /app), change the logged-in redirect to redirect("/app").
+ */
+export default async function LoginPage() {
+  const session = await getServerSession(authOptions);
+
+  if (!session) {
+    redirect("/");
+  }
+
+  redirect("/");
 }

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import LoginButton from "../components/LoginButton";
 
 export default function HomePage() {
   return (
@@ -11,12 +11,7 @@ export default function HomePage() {
           From intention to action.
         </p>
         <div className="mt-12">
-          <Link
-            href="/login"
-            className="inline-flex items-center justify-center rounded-lg bg-stone-800 text-stone-50 px-6 py-3 text-sm font-medium hover:bg-stone-700 transition-colors"
-          >
-            Continue with Google
-          </Link>
+          <LoginButton />
         </div>
       </div>
     </main>
