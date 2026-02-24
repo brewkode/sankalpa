@@ -6,7 +6,7 @@ Sankalpa (संकल्प) means "intention to action" in Sanskrit. This is a
 ## Tech Stack
 - Frontend: Next.js 14 (App Router), JavaScript, Tailwind CSS
 - Backend: Supabase (Postgres + Auth), Next.js API Routes
-- LLM: OpenAI GPT-4o-mini (server-side only)
+- LLM: Anthropic Claude (server-side only)
 - Voice: Web Speech API
 - Deploy: Vercel
 
@@ -48,9 +48,8 @@ Sankalpa (संकल्प) means "intention to action" in Sanskrit. This is a
 - Store original voice_input for debugging
 
 ## LLM Parsing
-- All OpenAI calls in API routes (never in client)
-- Use GPT-4o-mini model
-- Temperature: 0 (deterministic)
+- All Anthropic Claude calls in API routes (never in client)
+- Use Claude model (e.g. claude-3-5-sonnet)
 - Return only JSON (no markdown wrappers)
 - Handle parsing errors gracefully
 
@@ -76,7 +75,7 @@ Sankalpa (संकल्प) means "intention to action" in Sanskrit. This is a
 app/
   page.js                 # Home/main app
   login/page.js           # Login page
-  api/parse-habits/route.js  # OpenAI parsing endpoint
+  api/parse-habits/route.js  # Claude parsing endpoint
 components/
   VoiceButton.js          # Voice recording UI
   HabitList.js            # Display habits
@@ -147,9 +146,9 @@ recognition.start()
 - Push to GitHub
 - Deploy to Vercel
 - Add env vars in Vercel dashboard:
-  - NEXT_PUBLIC_SUPABASE_URL
-  - NEXT_PUBLIC_SUPABASE_ANON_KEY
-  - OPENAI_API_KEY (no NEXT_PUBLIC prefix)
+  - SUPABASE_URL
+  - SUPABASE_SECRET_KEY
+  - ANTHROPIC_API_KEY
 
 ## Remember
 - Keep it simple - this is an MVP

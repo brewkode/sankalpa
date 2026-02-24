@@ -24,7 +24,7 @@
 **Frontend:** Next.js 14 (App Router), JavaScript, Tailwind CSS
 **Voice:** Web Speech API
 **Backend:** Supabase (Postgres + Auth), Next.js API Routes
-**LLM:** OpenAI GPT-4o-mini
+**LLM:** Anthropic Claude
 **Deploy:** Vercel
 
 ---
@@ -35,13 +35,13 @@
 User Browser (Web Speech API)
     ↓
 Next.js API Route (/api/parse-habits)
-    ↓ OpenAI API key (server-side only)
-GPT-4o-mini
+    ↓ Anthropic API key (server-side only)
+Claude
     ↓
-Frontend → Supabase (Postgres + RLS)
+Frontend → Supabase (Postgres)
 ```
 
-**Key:** OpenAI key never exposed to browser. All LLM calls server-side.
+**Key:** Anthropic key never exposed to browser. All LLM calls server-side.
 
 ---
 

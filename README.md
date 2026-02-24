@@ -6,7 +6,7 @@ From intention to action. Voice-first habit tracking.
 
 - **Frontend:** Next.js 14, Tailwind CSS
 - **Backend:** Supabase (Postgres + Auth)
-- **LLM:** OpenAI GPT-4o-mini
+- **LLM:** Anthropic Claude
 - **Deploy:** Vercel
 
 ## Setup
@@ -23,8 +23,8 @@ From intention to action. Voice-first habit tracking.
    cp .env.example .env.local
 ```
    Fill in:
-   - Supabase URL + anon key
-   - OpenAI API key
+   - Supabase URL + Secret key
+   - Anthropic API key
 
 3. **Supabase setup:**
    - Create project at supabase.com
