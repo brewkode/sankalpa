@@ -1,0 +1,158 @@
+# Sankalpa - Voice-First Habit Tracker
+
+## Project Context
+Sankalpa (संकल्प) means "intention to action" in Sanskrit. This is a voice-first habit tracking app with a zen + motivational tone.
+
+## Tech Stack
+- Frontend: Next.js 14 (App Router), JavaScript, Tailwind CSS
+- Backend: Supabase (Postgres + Auth), Next.js API Routes
+- LLM: OpenAI GPT-4o-mini (server-side only)
+- Voice: Web Speech API
+- Deploy: Vercel
+
+## Code Style
+- Use modern ES6+ JavaScript (no TypeScript for MVP)
+- Prefer async/await over promise chains
+- Use descriptive variable names (habitName, not hn)
+- Add JSDoc comments for complex functions
+- Handle errors with try/catch blocks
+- Keep functions small and single-purpose
+
+## Next.js Patterns
+- Use App Router conventions (app/ directory)
+- Client components: Add 'use client' directive at top
+- Server components: Default (no directive needed)
+- API routes: app/api/[name]/route.js
+- Use NextResponse for API responses
+- Server-side env vars: No NEXT_PUBLIC prefix (secure)
+- Client-side env vars: NEXT_PUBLIC prefix required
+
+## Supabase Patterns
+- Always use environment variables for keys
+- Use Supabase client methods (not raw SQL in frontend)
+- Enable RLS on all tables
+- Use .single() when expecting one row
+- Use .select('*') explicitly
+- Filter deleted logs: WHERE is_deleted = false
+
+## Database Queries
+- Always filter: WHERE is_deleted = false
+- Sort by date DESC for recent logs
+- Use indexes for user_id queries
+- Join sparingly (denormalized data is OK for MVP)
+
+## Voice Input
+- Use Web Speech API (webkitSpeechRecognition)
+- Handle browser compatibility (show error if unsupported)
+- Provide visual feedback during recording
+- Store original voice_input for debugging
+
+## LLM Parsing
+- All OpenAI calls in API routes (never in client)
+- Use GPT-4o-mini model
+- Temperature: 0 (deterministic)
+- Return only JSON (no markdown wrappers)
+- Handle parsing errors gracefully
+
+## Security
+- Never commit .env files
+- Use Supabase RLS for data isolation
+- API keys only in server-side code
+- Validate user input before processing
+
+## UI/UX Guidelines
+- Voice & Copy: Zen + motivational
+- Minimal language, no judgment
+- Emoji: ✨ (logged) 🔥 (streak) 🎤 (voice) ⏱️ (duration)
+- Buttons: [Tell me] [Skip for now] [Yes, remember]
+- No excessive celebration (no 🎉 🎊)
+
+## Copy Examples
+- Confirmations: "✨ Logged." "✨ Yoga - 30 minutes. Well done."
+- Prompts: "How long did you practice?" "Was it around 30 minutes?"
+- Milestones: "🔥 7 days of yoga. You're building something real."
+
+## File Structure
+app/
+  page.js                 # Home/main app
+  login/page.js           # Login page
+  api/parse-habits/route.js  # OpenAI parsing endpoint
+components/
+  VoiceButton.js          # Voice recording UI
+  HabitList.js            # Display habits
+  ProgressivePrompt.js    # Missing data prompts
+lib/
+  supabase.js             # Supabase client (browser)
+  supabaseServer.js       # Supabase client (server)
+  streaks.js              # Streak calculation
+
+## Common Patterns
+
+### API Route Template
+```javascript
+import { NextResponse } from 'next/server'
+
+export async function POST(request) {
+  try {
+    const { data } = await request.json()
+    // Process
+    return NextResponse.json({ result })
+  } catch (error) {
+    console.error('Error:', error)
+    return NextResponse.json({ error: 'Failed' }, { status: 500 })
+  }
+}
+```
+
+### Supabase Query Template
+```javascript
+const { data, error } = await supabase
+  .from('habit_logs')
+  .select('*')
+  .eq('user_id', userId)
+  .eq('is_deleted', false)
+  .order('date', { ascending: false })
+
+if (error) throw error
+```
+
+### Voice Recording Template
+```javascript
+const recognition = new webkitSpeechRecognition()
+recognition.continuous = false
+recognition.interimResults = false
+
+recognition.onresult = (event) => {
+  const transcript = event.results[0][0].transcript
+  handleTranscript(transcript)
+}
+
+recognition.onerror = (event) => {
+  console.error('Speech error:', event.error)
+  showError('Voice recognition failed')
+}
+
+recognition.start()
+```
+
+## Testing Checklist
+- Voice input works in Chrome/Edge
+- Parsing returns valid JSON
+- Multi-user data isolation (RLS works)
+- Streak calculation accurate
+- Edit deletes old + creates new
+- Progressive prompts appear for incomplete logs
+
+## Deployment
+- Push to GitHub
+- Deploy to Vercel
+- Add env vars in Vercel dashboard:
+  - NEXT_PUBLIC_SUPABASE_URL
+  - NEXT_PUBLIC_SUPABASE_ANON_KEY
+  - OPENAI_API_KEY (no NEXT_PUBLIC prefix)
+
+## Remember
+- Keep it simple - this is an MVP
+- Zen + motivational tone in all copy
+- Security first (RLS, server-side API keys)
+- Voice-first UX (make logging fast)
