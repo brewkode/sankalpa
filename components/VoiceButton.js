@@ -2,20 +2,79 @@
 
 import { useState, useCallback } from "react";
 import HabitConfirmCard from "./HabitConfirmCard";
+import ProgressivePrompt from "./ProgressivePrompt";
 
 const SpeechRecognition =
   typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
 
 /**
  * Voice recording button: Web Speech API → POST /api/parse-habits → zen feedback.
- * States: idle | recording | sending | confirming | success | error
+ * States: idle | recording | sending | confirming | prompting | success | error
  * Emoji per CLAUDE.md: 🎤 (voice), ✨ (logged).
+ * @param {{ onSuccess?: () => void }} props - Optional callback fired after all prompts complete.
  */
-export default function VoiceButton() {
+export default function VoiceButton({ onSuccess } = {}) {
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("");
   const [pendingHabits, setPendingHabits] = useState(null);
   const [pendingVoiceInput, setPendingVoiceInput] = useState("");
+  const [pendingPrompts, setPendingPrompts] = useState([]);
+
+  /**
+   * After a successful save, check logs for incomplete entries.
+   * If any, enter prompting state; otherwise show success immediately.
+   */
+  const enterPromptingOrSuccess = useCallback((logs) => {
+    const incomplete = (logs || [])
+      .filter((l) => !l.is_complete)
+      .map(({ id, habit_name, unit }) => ({ id, habit_name, unit }));
+    if (incomplete.length > 0) {
+      setPendingPrompts(incomplete);
+      setStatus("prompting");
+    } else {
+      setStatus("success");
+      setMessage("✨ Logged.");
+      onSuccess?.();
+    }
+  }, [onSuccess]);
+
+  /**
+   * Advance to the next pending prompt, or complete if all done.
+   * Uses functional updater to avoid stale closure over pendingPrompts.
+   */
+  const advancePrompts = useCallback(() => {
+    setPendingPrompts((prev) => {
+      const next = prev.slice(1);
+      if (next.length > 0) {
+        return next;
+      }
+      // All prompts answered — show success
+      setStatus("success");
+      setMessage("✨ Logged.");
+      onSuccess?.();
+      return [];
+    });
+  }, [onSuccess]);
+
+  /** PATCH the update-habit-log endpoint, then advance regardless of outcome. */
+  const handlePromptSubmit = useCallback(async (value, unit) => {
+    const current = pendingPrompts[0];
+    try {
+      await fetch("/api/update-habit-log", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: current.id, quantity: Number(value), unit: unit ?? current.unit }),
+      });
+    } catch (err) {
+      console.error("update-habit-log error (non-fatal):", err);
+    }
+    advancePrompts();
+  }, [pendingPrompts, advancePrompts]);
+
+  /** Skip the current prompt without PATCHing. */
+  const handlePromptSkip = useCallback(() => {
+    advancePrompts();
+  }, [advancePrompts]);
 
   const handleTranscript = useCallback(async (transcript) => {
     setStatus("sending");
@@ -38,13 +97,12 @@ export default function VoiceButton() {
         setStatus("confirming");
         return;
       }
-      setStatus("success");
-      setMessage("✨ Logged.");
+      enterPromptingOrSuccess(data.logs);
     } catch (err) {
       setStatus("error");
       setMessage("Could not save. Try again.");
     }
-  }, []);
+  }, [enterPromptingOrSuccess]);
 
   const handleConfirm = useCallback(async () => {
     setStatus("sending");
@@ -67,13 +125,12 @@ export default function VoiceButton() {
       }
       setPendingHabits(null);
       setPendingVoiceInput("");
-      setStatus("success");
-      setMessage("✨ Logged.");
+      enterPromptingOrSuccess(data.logs);
     } catch (err) {
       setStatus("error");
       setMessage("Could not save. Try again.");
     }
-  }, [pendingHabits, pendingVoiceInput]);
+  }, [pendingHabits, pendingVoiceInput, enterPromptingOrSuccess]);
 
   const handleDiscard = useCallback(() => {
     setPendingHabits(null);
@@ -124,10 +181,10 @@ export default function VoiceButton() {
     return <VoiceUnsupportedFallback onSubmit={handleTranscript} />;
   }
 
-  const busy = status === "recording" || status === "sending" || status === "confirming";
+  const busy = status === "recording" || status === "sending" || status === "confirming" || status === "prompting";
 
   return (
-    <div className="flex flex-col items-start gap-2">
+    <div className="flex flex-col items-start gap-2 w-full">
       <button
         type="button"
         onClick={startRecording}
@@ -146,7 +203,16 @@ export default function VoiceButton() {
         />
       )}
 
-      {message && status !== "confirming" && (
+      {status === "prompting" && pendingPrompts.length > 0 && (
+        <ProgressivePrompt
+          habitName={pendingPrompts[0].habit_name}
+          unit={pendingPrompts[0].unit}
+          onSubmit={handlePromptSubmit}
+          onSkip={handlePromptSkip}
+        />
+      )}
+
+      {message && status !== "confirming" && status !== "prompting" && (
         <p className={`text-sm ${status === "error" ? "text-red-600" : "text-stone-600"}`}>
           {message}
         </p>
