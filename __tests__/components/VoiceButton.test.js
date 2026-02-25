@@ -15,6 +15,20 @@ jest.mock("../../components/HabitConfirmCard", () =>
   }
 );
 
+// Mock ProgressivePrompt to isolate VoiceButton's prompting state logic
+jest.mock("../../components/ProgressivePrompt", () =>
+  function MockProgressivePrompt({ habitName, unit, onSubmit, onSkip }) {
+    return (
+      <div data-testid="progressive-prompt">
+        <span data-testid="prompt-habit-name">{habitName}</span>
+        <span data-testid="prompt-unit">{unit ?? ""}</span>
+        <button onClick={() => onSubmit("30", unit)}>Submit prompt</button>
+        <button onClick={onSkip}>Skip prompt</button>
+      </div>
+    );
+  }
+);
+
 // window.SpeechRecognition is set to jest.fn() by jest.setup.js,
 // which runs before this module is imported. VoiceButton captures that
 // reference at module load time, so configuring the mock here affects
@@ -134,6 +148,113 @@ describe("VoiceButton", () => {
     ).toBeInTheDocument();
   });
 
+  // ── onSuccess callback (Feature 2) ────────────────────────────────────────
+
+  it("calls onSuccess after a direct successful save", async () => {
+    const onSuccess = jest.fn();
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, logs: [] }),
+    });
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
+    });
+
+    await waitFor(() => expect(screen.getByText("✨ Logged.")).toBeInTheDocument());
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onSuccess after a confirmed save", async () => {
+    const onSuccess = jest.fn();
+    const habits = [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }];
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ requiresConfirmation: true, habits }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, logs: [] }),
+      });
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("habit-confirm-card"));
+    fireEvent.click(screen.getByRole("button", { name: /Yes, log it/i }));
+
+    await waitFor(() => expect(screen.getByText("✨ Logged.")).toBeInTheDocument());
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT call onSuccess when the API returns an error", async () => {
+    const onSuccess = jest.fn();
+    global.fetch.mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "Something went wrong." }),
+    });
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByText("Something went wrong."));
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call onSuccess when user discards confirmation", async () => {
+    const onSuccess = jest.fn();
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        requiresConfirmation: true,
+        habits: [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }],
+      }),
+    });
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("habit-confirm-card"));
+    fireEvent.click(screen.getByRole("button", { name: /Discard/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("habit-confirm-card")).not.toBeInTheDocument()
+    );
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("renders without error when onSuccess prop is not provided", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, logs: [] }),
+    });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
+    });
+
+    await waitFor(() => expect(screen.getByText("✨ Logged.")).toBeInTheDocument());
+  });
+
   // ── Confidence confirmation flow ───────────────────────────────────────────
 
   it("shows HabitConfirmCard when the API returns requiresConfirmation", async () => {
@@ -238,5 +359,266 @@ describe("VoiceButton", () => {
     });
     // Voice button re-enabled and ready
     expect(screen.getByRole("button", { name: /Tell me/i })).not.toBeDisabled();
+  });
+
+  // ── Progressive prompts (Feature 4) ────────────────────────────────────────
+
+  it("shows ProgressivePrompt when a log has is_complete: false", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        logs: [{ id: "log-1", habit_name: "yoga", unit: null, is_complete: false }],
+      }),
+    });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("progressive-prompt")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("prompt-habit-name")).toHaveTextContent("yoga");
+  });
+
+  it("does NOT show ProgressivePrompt when all logs are complete", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        logs: [{ id: "log-1", habit_name: "yoga", unit: "minutes", is_complete: true }],
+      }),
+    });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga for 30 minutes" }]] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("✨ Logged.")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("progressive-prompt")).not.toBeInTheDocument();
+  });
+
+  it("onSuccess is NOT called immediately when prompts are pending", async () => {
+    const onSuccess = jest.fn();
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        logs: [{ id: "log-1", habit_name: "yoga", unit: null, is_complete: false }],
+      }),
+    });
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("progressive-prompt"));
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("the Tell me button is disabled while in prompting state", async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        logs: [{ id: "log-1", habit_name: "yoga", unit: null, is_complete: false }],
+      }),
+    });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("progressive-prompt"));
+    expect(screen.getByRole("button", { name: /Tell me/i })).toBeDisabled();
+  });
+
+  it("Skip advances past the prompt and shows ✨ Logged. (no PATCH call)", async () => {
+    const onSuccess = jest.fn();
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        logs: [{ id: "log-1", habit_name: "yoga", unit: null, is_complete: false }],
+      }),
+    });
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("progressive-prompt"));
+
+    // Only one fetch call so far (parse-habits)
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Skip prompt/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("✨ Logged.")).toBeInTheDocument();
+    });
+
+    // No additional PATCH fetch
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("Done PATCHes update-habit-log, advances past prompt, shows ✨ Logged.", async () => {
+    const onSuccess = jest.fn();
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          logs: [{ id: "log-1", habit_name: "yoga", unit: null, is_complete: false }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "I did yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("progressive-prompt"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Submit prompt/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("✨ Logged.")).toBeInTheDocument();
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const patchCall = global.fetch.mock.calls[1];
+    expect(patchCall[0]).toBe("/api/update-habit-log");
+    expect(patchCall[1].method).toBe("PATCH");
+    const patchBody = JSON.parse(patchCall[1].body);
+    expect(patchBody.id).toBe("log-1");
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("two incomplete logs show first prompt then second, then ✨ Logged.", async () => {
+    const onSuccess = jest.fn();
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          logs: [
+            { id: "log-1", habit_name: "yoga", unit: null, is_complete: false },
+            { id: "log-2", habit_name: "water", unit: "glasses", is_complete: false },
+          ],
+        }),
+      })
+      .mockResolvedValue({ ok: true, json: async () => ({ success: true }) }); // PATCH calls
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga and water" }]] });
+    });
+
+    // First prompt: yoga
+    await waitFor(() => screen.getByTestId("progressive-prompt"));
+    expect(screen.getByTestId("prompt-habit-name")).toHaveTextContent("yoga");
+    expect(onSuccess).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Skip prompt/i }));
+
+    // Second prompt: water
+    await waitFor(() => {
+      expect(screen.getByTestId("prompt-habit-name")).toHaveTextContent("water");
+    });
+    expect(onSuccess).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Skip prompt/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("✨ Logged.")).toBeInTheDocument();
+    });
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("PATCH failure is non-fatal: prompt still advances and ✨ Logged. shows", async () => {
+    const onSuccess = jest.fn();
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          logs: [{ id: "log-1", habit_name: "yoga", unit: null, is_complete: false }],
+        }),
+      })
+      .mockRejectedValueOnce(new Error("Network error")); // PATCH fails
+
+    render(<VoiceButton onSuccess={onSuccess} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("progressive-prompt"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Submit prompt/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("✨ Logged.")).toBeInTheDocument();
+    });
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows ProgressivePrompt after a confirmed save with incomplete logs", async () => {
+    const habits = [{ habit_name: "yoga", quantity: null, unit: null, confidence: 0.45 }];
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ requiresConfirmation: true, habits }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          logs: [{ id: "log-1", habit_name: "yoga", unit: null, is_complete: false }],
+        }),
+      });
+
+    render(<VoiceButton />);
+    fireEvent.click(screen.getByRole("button", { name: /Tell me/i }));
+
+    act(() => {
+      mockInstance.onresult({ results: [[{ transcript: "yoga" }]] });
+    });
+
+    await waitFor(() => screen.getByTestId("habit-confirm-card"));
+    fireEvent.click(screen.getByRole("button", { name: /Yes, log it/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("progressive-prompt")).toBeInTheDocument();
+    });
   });
 });

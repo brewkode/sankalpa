@@ -14,7 +14,7 @@ export default async function HomePage() {
   }
 
   const userId = nextAuthIdToUuid(session.user.id);
-  const { summary, nudge } = await getHabitSummary(supabaseServer, userId);
+  const { summary, nudges } = await getHabitSummary(supabaseServer, userId);
 
-  return <AppHome user={session.user} summary={summary} nudge={nudge} />;
+  return <AppHome user={session.user} summary={summary} nudges={nudges} />;
 }

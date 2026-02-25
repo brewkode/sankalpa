@@ -1,9 +1,11 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import VoiceButton from "./VoiceButton";
 
-export default function AppHome({ user, summary = [], nudge = null }) {
+export default function AppHome({ user, summary = [], nudges = [] }) {
+  const router = useRouter();
   const displayName = user?.name ?? user?.email ?? "there";
 
   return (
@@ -25,14 +27,18 @@ export default function AppHome({ user, summary = [], nudge = null }) {
         Welcome, {displayName}.
       </p>
 
-      {nudge && (
-        <p className="mt-6 text-stone-600 text-sm font-light">
-          🔥 {nudge.streak} days of {nudge.habit_name_display} — log today to keep it going.
-        </p>
+      {nudges.length > 0 && (
+        <div className="mt-6 flex flex-col gap-1">
+          {nudges.map((n) => (
+            <p key={n.habit_name} className="text-stone-600 text-sm font-light">
+              🔥 {n.habit_name_display} — {n.streak} days. Log today to keep it going.
+            </p>
+          ))}
+        </div>
       )}
 
       <section className="mt-10">
-        <VoiceButton />
+        <VoiceButton onSuccess={router.refresh} />
       </section>
 
       <section className="mt-10">
